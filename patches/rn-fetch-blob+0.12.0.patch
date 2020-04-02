@@ -1,23 +1,3 @@
-diff --git a/node_modules/rn-fetch-blob/android/build.gradle b/node_modules/rn-fetch-blob/android/build.gradle
-index a4ca7a4..f3cd184 100644
---- a/node_modules/rn-fetch-blob/android/build.gradle
-+++ b/node_modules/rn-fetch-blob/android/build.gradle
-@@ -37,10 +37,13 @@ android {
-     }
-     productFlavors {
-     }
-+    compileOptions {
-+        sourceCompatibility 1.8
-+        targetCompatibility 1.8
-+    }
- }
- 
- dependencies {
-     implementation "com.facebook.react:react-native:${safeExtGet('reactNativeVersion', '+')}"
--    //compile 'com.squareup.okhttp3:okhttp:+'
--    //{RNFetchBlob_PRE_0.28_DEPDENDENCY}
-+    implementation "com.squareup.okhttp3:okhttp:3.13.1"
- }
 diff --git a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlob.java b/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlob.java
 index 602d51d..78b7929 100644
 --- a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlob.java
@@ -119,10 +99,21 @@ index a4d7015..f430865 100644
       * List content of folder
       * @param path Target folder
 diff --git a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobReq.java b/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobReq.java
-index a8abd71..ad273ce 100644
+index a8abd71..edbf851 100644
 --- a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobReq.java
 +++ b/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobReq.java
-@@ -407,6 +407,7 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
+@@ -233,7 +233,9 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
+             if (this.options.trusty) {
+                 clientBuilder = RNFetchBlobUtils.getUnsafeOkHttpClient(client);
+             } else {
+-                clientBuilder = client.newBuilder();
++                // Uses default trust manager for connection validation.
++                // Emits warning if SSL problem encountered, for user acceptance/rejection.
++                clientBuilder = RNFetchBlobUtils.getRelaxedOkHttpClient(client);
+             }
+ 
+             // wifi only, need ACCESS_NETWORK_STATE permission
+@@ -407,6 +409,7 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
                                  extended = new RNFetchBlobFileResp(
                                          RNFetchBlob.RCTContext,
                                          taskId,
@@ -130,7 +121,7 @@ index a8abd71..ad273ce 100644
                                          originalResponse.body(),
                                          destPath,
                                          options.overwrite);
-@@ -556,16 +557,13 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
+@@ -556,16 +559,13 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
                              return;
                          }
                          try {
@@ -151,7 +142,7 @@ index a8abd71..ad273ce 100644
                              if(responseFormat == ResponseFormat.UTF8) {
                                  String utf8 = new String(b);
                                  callback.invoke(null, RNFetchBlobConst.RNFB_RESPONSE_UTF8, utf8);
-@@ -591,7 +589,19 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
+@@ -591,7 +591,19 @@ public class RNFetchBlobReq extends BroadcastReceiver implements Runnable {
  //                    ignored.printStackTrace();
                  }
  
@@ -172,8 +163,139 @@ index a8abd71..ad273ce 100644
  
                  if(rnFetchBlobFileResp != null && !rnFetchBlobFileResp.isDownloadComplete()){
                      callback.invoke("Download interrupted.", null);
+diff --git a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobUtils.java b/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobUtils.java
+index ab35fdd..8426482 100644
+--- a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobUtils.java
++++ b/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/RNFetchBlobUtils.java
+@@ -6,17 +6,21 @@ import com.facebook.react.modules.core.DeviceEventManagerModule;
+ 
+ import java.security.MessageDigest;
+ import java.security.cert.CertificateException;
++import java.security.cert.X509Certificate;
++import java.security.KeyStore;
++import java.security.NoSuchAlgorithmException;
++import java.security.KeyStoreException;
+ 
+ import javax.net.ssl.HostnameVerifier;
+ import javax.net.ssl.SSLContext;
+ import javax.net.ssl.SSLSession;
+ import javax.net.ssl.SSLSocketFactory;
+ import javax.net.ssl.TrustManager;
++import javax.net.ssl.TrustManagerFactory;
+ import javax.net.ssl.X509TrustManager;
+ 
+ import okhttp3.OkHttpClient;
+ 
+-
+ public class RNFetchBlobUtils {
+ 
+     public static String getMD5(String input) {
+@@ -53,23 +57,73 @@ public class RNFetchBlobUtils {
+                 .emit(RNFetchBlobConst.EVENT_MESSAGE, args);
+     }
+ 
+-    public static OkHttpClient.Builder getUnsafeOkHttpClient(OkHttpClient client) {
++
++    // Uses default, secure trust manager for connection validation.
++    // Emits warning if SSL problem encountered.
++    public static OkHttpClient.Builder getRelaxedOkHttpClient(OkHttpClient client) {
+         try {
+-            // Create a trust manager that does not validate certificate chains
++            final X509TrustManager defaultTrustManager = getDefaultTrustManager();
++
+             final X509TrustManager x509TrustManager = new X509TrustManager() {
+                 @Override
+-                public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
++                public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                 }
+ 
+                 @Override
+-                public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
++                public void checkServerTrusted(final X509Certificate[] chain, final String authType) throws CertificateException {
++                    try {
++                        defaultTrustManager.checkServerTrusted(chain, authType);
++                    } catch(CertificateException ce) {
++                        emitWarningEvent("RNFetchBlob custom: Server presented problem with SSL handshake.");
++                    }
+                 }
+ 
+                 @Override
+-                public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+-                    return new java.security.cert.X509Certificate[]{};
++                public X509Certificate[] getAcceptedIssuers() {
++                    return new X509Certificate[]{};
+                 }
+             };
++
++            final TrustManager[] trustManagers = new TrustManager[]{x509TrustManager};
++
++            final SSLContext sslContext = SSLContext.getInstance("SSL");
++            sslContext.init(null, trustManagers, new java.security.SecureRandom());
++
++            final SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
++
++            OkHttpClient.Builder builder = client.newBuilder();
++            builder.sslSocketFactory(sslSocketFactory, x509TrustManager);
++            builder.hostnameVerifier(new HostnameVerifier() {
++                @Override
++                public boolean verify(String hostname, SSLSession session) {
++                    return (session.getPeerHost().equalsIgnoreCase(hostname));
++                }
++            });
++
++            return builder;
++        } catch (Exception e) {
++            throw new RuntimeException(e);
++        }
++    }
++
++    public static X509TrustManager getDefaultTrustManager() throws NoSuchAlgorithmException, KeyStoreException {
++        TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
++        trustManagerFactory.init((KeyStore) null); // Using null here initialises the TrustManagerFactory with the default trust store.
++
++        X509TrustManager defaultTrustManager = null;
++        for (TrustManager tm : trustManagerFactory.getTrustManagers()) {
++            if (tm instanceof X509TrustManager) {
++                defaultTrustManager = (X509TrustManager) tm;
++            }
++        }
++        return defaultTrustManager;
++    }
++
++    public static OkHttpClient.Builder getUnsafeOkHttpClient(OkHttpClient client) {
++        try {
++            // Create a trust manager that does not validate certificate chains
++            final X509TrustManager x509TrustManager = getUnsafeTrustManager();
++
+             final TrustManager[] trustAllCerts = new TrustManager[]{ x509TrustManager };
+ 
+             // Install the all-trusting trust manager
+@@ -92,4 +146,23 @@ public class RNFetchBlobUtils {
+             throw new RuntimeException(e);
+         }
+     }
++
++    public static X509TrustManager getUnsafeTrustManager() {
++        return new X509TrustManager() {
++            @Override
++            public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
++            }
++
++            @Override
++            public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
++            }
++
++            @Override
++            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
++                return new java.security.cert.X509Certificate[]{};
++            }
++        };
++    }
++
++
+ }
 diff --git a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/Response/RNFetchBlobFileResp.java b/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/Response/RNFetchBlobFileResp.java
-index 2470eef..4e92989 100644
+index 2470eef..d46be3f 100644
 --- a/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/Response/RNFetchBlobFileResp.java
 +++ b/node_modules/rn-fetch-blob/android/src/main/java/com/RNFetchBlob/Response/RNFetchBlobFileResp.java
 @@ -14,6 +14,7 @@ import java.io.File;
@@ -205,30 +327,17 @@ index 2470eef..4e92989 100644
          this.originalBody = body;
          assert path != null;
          this.mPath = path;
-@@ -67,7 +70,18 @@ public class RNFetchBlobFileResp extends ResponseBody {
- 
-     @Override
-     public long contentLength() {
--        return originalBody.contentLength();
-+        long expectedBytes = originalBody.contentLength();
-+        String uncompressHeader = "X-Uncompressed-Content-Length";
-+        String uncompressedLength = headers.get(uncompressHeader);
-+        if (uncompressedLength == null) {
-+            uncompressedLength = headers.get(uncompressHeader.toLowerCase());
-+        }
-+
-+        if (uncompressedLength != null && uncompressedLength.length() > 0) {
-+            expectedBytes = Long.parseLong(uncompressedLength);
-+        }
-+
-+        return expectedBytes;
-     }
- 
-     public boolean isDownloadComplete() {
-@@ -94,6 +108,7 @@ public class RNFetchBlobFileResp extends ResponseBody {
+@@ -94,6 +97,14 @@ public class RNFetchBlobFileResp extends ResponseBody {
                      // End marker has been received for chunked download
                      isEndMarkerReceived = true;
                  }
++
++                long expectedBytes = contentLength();
++                String uncompressedLength = headers.get("X-Uncompressed-Content-Length");
++
++                if (uncompressedLength != null && uncompressedLength.length() > 0) {
++                    expectedBytes = Long.parseLong(uncompressedLength);
++                }
 +
                  RNFetchBlobProgressConfig reportConfig = RNFetchBlobReq.getReportProgress(mTaskId);
  
