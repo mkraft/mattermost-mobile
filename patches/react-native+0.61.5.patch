@@ -19,6 +19,17 @@ index 7dffc17..548e7bb 100644
    },
    horizontallyInverted: {
      transform: [{scaleX: -1}],
+diff --git a/node_modules/react-native/Libraries/WebSocket/NativeWebSocketModule.js b/node_modules/react-native/Libraries/WebSocket/NativeWebSocketModule.js
+index da2c57f..6849158 100644
+--- a/node_modules/react-native/Libraries/WebSocket/NativeWebSocketModule.js
++++ b/node_modules/react-native/Libraries/WebSocket/NativeWebSocketModule.js
+@@ -31,5 +31,5 @@ export interface Spec extends TurboModule {
+ }
+ 
+ export default (TurboModuleRegistry.getEnforcing<Spec>(
+-  'WebSocketModule',
++  'MattermostWebSocketModule',
+ ): Spec);
 diff --git a/node_modules/react-native/Libraries/WebSocket/RCTSRWebSocket.h b/node_modules/react-native/Libraries/WebSocket/RCTSRWebSocket.h
 index 1b17cff..9efa98e 100644
 --- a/node_modules/react-native/Libraries/WebSocket/RCTSRWebSocket.h
