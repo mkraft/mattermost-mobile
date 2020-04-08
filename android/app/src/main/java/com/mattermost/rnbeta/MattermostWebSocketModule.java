@@ -33,6 +33,17 @@ import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import okio.ByteString;
 
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
+
 @ReactModule(name = MattermostWebSocketModule.NAME, hasConstants = false)
 public final class MattermostWebSocketModule extends ReactContextBaseJavaModule {
 
@@ -90,12 +101,31 @@ public final class MattermostWebSocketModule extends ReactContextBaseJavaModule 
         final double socketID) {
 
         final int id = (int) socketID;
-        OkHttpClient client =
-            new OkHttpClient.Builder()
+
+        boolean trusty = false;
+
+        //TODO: Change WebSocket.js in Libraries to allow `trusty` as an option, instead of stuffing in options["headers"]
+        if (options != null && options.hasKey("headers")) {
+            ReadableMap headersInOptions = options.getMap("headers");
+
+            if (headersInOptions.hasKey("trusty")) {
+                trusty = headersInOptions.getBoolean("trusty");
+            }
+        }
+
+        OkHttpClient client = new OkHttpClient();
+
+        if (trusty) {
+            // Check if explicit request has been made for using an unsafe trust manager (e.g. SSL is relaxed)
+            client = getUnsafeOkHttpClient().build();
+        } else {
+            // Default, secure trust manager for connection validation.
+            client = new OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .writeTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.MINUTES) // Disable timeouts for read
                 .build();
+        }
 
         Request.Builder builder = new Request.Builder().tag(id).url(url);
 
@@ -119,9 +149,12 @@ public final class MattermostWebSocketModule extends ReactContextBaseJavaModule 
                 if (key.equalsIgnoreCase("origin")) {
                     hasOriginHeader = true;
                 }
+
                 builder.addHeader(key, headers.getString(key));
                 } else {
-                    FLog.w(ReactConstants.TAG, "Ignoring: requested " + key + ", value not a string");
+                    if (key != "trusty") {
+                        FLog.w(ReactConstants.TAG, "Ignoring: requested " + key + ", value not a string");
+                    }
                 }
             }
         }
@@ -408,5 +441,50 @@ public final class MattermostWebSocketModule extends ReactContextBaseJavaModule 
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("Unable to set " + uri + " as default origin header");
         }
+    }
+
+    private static OkHttpClient.Builder getUnsafeOkHttpClient() {
+        try {
+            // Create a trust manager that does not validate certificate chains
+            final X509TrustManager x509TrustManager = getUnsafeTrustManager();
+
+            final TrustManager[] trustAllCerts = new TrustManager[]{ x509TrustManager };
+
+            // Install the all-trusting trust manager
+            final SSLContext sslContext = SSLContext.getInstance("SSL");
+            sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+            // Create an ssl socket factory with our all-trusting manager
+            final SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
+
+            OkHttpClient.Builder builder = new OkHttpClient.Builder();
+            builder.sslSocketFactory(sslSocketFactory, x509TrustManager);
+            builder.hostnameVerifier(new HostnameVerifier() {
+                @Override
+                public boolean verify(String hostname, SSLSession session) {
+                    return true;
+                }
+            });
+
+            return builder;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static X509TrustManager getUnsafeTrustManager() {
+        return new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            @Override
+            public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            @Override
+            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                return new java.security.cert.X509Certificate[]{};
+            }
+        };
     }
 }

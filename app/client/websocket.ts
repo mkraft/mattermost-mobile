@@ -2,6 +2,8 @@
 // See LICENSE.txt for license information.
 
 import {Platform} from 'react-native';
+import {isSslRelaxed} from 'app/utils/network';
+import {emptyFunction} from 'app/utils/general';
 
 const MAX_WEBSOCKET_FAILS = 7;
 const MIN_WEBSOCKET_RETRY_TIME = 3000; // 3 sec
@@ -87,7 +89,15 @@ class WebSocketClient {
                 return;
             }
 
-            this.conn = new WebSocket(connectionUrl, [], {headers: {origin}, ...(additionalOptions || {})});
+            const options = {headers: {origin}, ...(additionalOptions || {})};
+            if (isSslRelaxed()) {
+                // TODO: Change WebSocket.js in Libraries to allow `trusty` as an option, instead of stuffing in options["headers"]
+
+                // @ts-ignore-error
+                options.headers.trusty = true;
+            }
+
+            this.conn = new WebSocket(connectionUrl, [], options);
             this.connectionUrl = connectionUrl;
             this.token = token;
 
@@ -204,7 +214,7 @@ class WebSocketClient {
         this.connectFailCount = 0;
         this.sequence = 1;
         if (this.conn && this.conn.readyState === WebSocket.OPEN) {
-            this.conn.onclose = () => {}; //eslint-disable-line no-empty-function
+            this.conn.onclose = emptyFunction;
             this.conn.close();
             this.conn = undefined;
             console.log('websocket closed'); //eslint-disable-line no-console
