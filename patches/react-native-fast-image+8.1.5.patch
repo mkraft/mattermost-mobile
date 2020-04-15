@@ -43,7 +43,7 @@ index 0000000..f2306f6
 +    }
 +}
 diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
-index 2214f04..c504bcd 100644
+index 2214f04..45fcf40 100644
 --- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
 +++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
 @@ -31,6 +31,17 @@ import okio.ForwardingSource;
@@ -135,7 +135,7 @@ index 2214f04..c504bcd 100644
  
          private final Handler handler;
  
-@@ -91,10 +132,21 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+@@ -91,10 +132,23 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
          void forget(String key) {
              LISTENERS.remove(key);
              PROGRESSES.remove(key);
@@ -144,20 +144,22 @@ index 2214f04..c504bcd 100644
  
          void expect(String key, FastImageProgressListener listener) {
              LISTENERS.put(key, listener);
-+            TRUST_SSL.put(key, listener.getTrustSsl());
++            TRUST_SSL.put(key, listener.getTrustSsl(key));
 +        }
 +
 +        @Override
 +        public Boolean isTrustSslEnabled(String key) {
 +            Boolean trustSsl = TRUST_SSL.get(key);
 +            if (trustSsl == null) {
-+                trustSsl = false;
++                // FIXME: Preloaded images don't go through listener creation and TRUST_SSL management.
++                // trustSsl = false;
++                trustSsl = true;
 +            }
 +            return trustSsl;
          }
  
          @Override
-@@ -186,4 +238,49 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+@@ -186,4 +240,49 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
              };
          }
      }
@@ -208,17 +210,17 @@ index 2214f04..c504bcd 100644
 +    }
  }
 diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java
-index 6cd5eb2..464e57c 100644
+index 6cd5eb2..8845b82 100644
 --- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java
 +++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java
 @@ -11,4 +11,5 @@ public interface FastImageProgressListener {
       */
      float getGranularityPercentage();
  
-+    Boolean getTrustSsl();
++    Boolean getTrustSsl(String key);
  }
 diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java
-index f97ec71..cb5ace1 100644
+index f97ec71..811aa77 100644
 --- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java
 +++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java
 @@ -26,6 +26,7 @@ import java.util.WeakHashMap;
@@ -229,23 +231,50 @@ index f97ec71..cb5ace1 100644
  import static com.dylanvann.fastimage.FastImageRequestListener.REACT_ON_ERROR_EVENT;
  import static com.dylanvann.fastimage.FastImageRequestListener.REACT_ON_LOAD_END_EVENT;
  import static com.dylanvann.fastimage.FastImageRequestListener.REACT_ON_LOAD_EVENT;
-@@ -36,6 +37,7 @@ class FastImageViewManager extends SimpleViewManager<FastImageViewWithUrl> imple
-     private static final String REACT_ON_LOAD_START_EVENT = "onFastImageLoadStart";
-     private static final String REACT_ON_PROGRESS_EVENT = "onFastImageProgress";
-     private static final Map<String, List<FastImageViewWithUrl>> VIEWS_FOR_URLS = new WeakHashMap<>();
-+    private static Boolean trustSsl = true;
- 
-     @Nullable
-     private RequestManager requestManager = null;
-@@ -125,6 +127,11 @@ class FastImageViewManager extends SimpleViewManager<FastImageViewWithUrl> imple
+@@ -125,6 +126,24 @@ class FastImageViewManager extends SimpleViewManager<FastImageViewWithUrl> imple
          view.setScaleType(scaleType);
      }
  
++    @ReactProp(name = "trustSSL")
++    public void setTrustSsl(FastImageViewWithUrl view, Boolean trustSsl) {
++        Boolean isTrusted = trustSsl;
++        if (isTrusted == null) {
++            isTrusted = false;
++        }
++        view.setTrustSsl(isTrusted);
++    }
++
 +    @Override
-+    public Boolean getTrustSsl() {
-+        return this.trustSsl;
++    public Boolean getTrustSsl(String key) {
++        List<FastImageViewWithUrl> viewsForKey = VIEWS_FOR_URLS.get(key);
++        if (viewsForKey == null) {
++            return false;
++        }
++        return viewsForKey.get(0).getTrustSsl();
 +    }
 +
      @Override
      public void onDropViewInstance(FastImageViewWithUrl view) {
          // This will cancel existing requests.
+diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewWithUrl.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewWithUrl.java
+index 0b74d92..8e0d18a 100644
+--- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewWithUrl.java
++++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewWithUrl.java
+@@ -7,8 +7,17 @@ import com.bumptech.glide.load.model.GlideUrl;
+ 
+ class FastImageViewWithUrl extends ImageView {
+     public GlideUrl glideUrl;
++    Boolean trustSsl;
+ 
+     public FastImageViewWithUrl(Context context) {
+         super(context);
+     }
++
++    public void setTrustSsl(Boolean trustSsl) {
++        this.trustSsl = trustSsl;
++    }
++
++    public Boolean getTrustSsl() {
++        return this.trustSsl;
++    }
+ }
