@@ -1,5 +1,49 @@
+diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageCookieJar.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageCookieJar.java
+new file mode 100644
+index 0000000..f2306f6
+--- /dev/null
++++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageCookieJar.java
+@@ -0,0 +1,38 @@
++package com.dylanvann.fastimage;
++
++import android.webkit.CookieManager;
++
++import java.util.Collections;
++import java.util.List;
++
++import okhttp3.Cookie;
++import okhttp3.CookieJar;
++import okhttp3.HttpUrl;
++
++public class FastImageCookieJar implements CookieJar {
++    private CookieManager cookieManager;
++
++    private CookieManager getCookieManager() {
++        if (cookieManager == null) {
++            cookieManager = CookieManager.getInstance();
++        }
++
++        return cookieManager;
++    }
++
++    @Override
++    public void saveFromResponse(HttpUrl url, List<Cookie> cookies) {
++        // Do nothing
++    }
++
++    @Override
++    public List<Cookie> loadForRequest(HttpUrl url) {
++        String cookie = getCookieManager().getCookie(url.toString());
++
++        if (cookie == null || cookie.isEmpty()) {
++            return Collections.emptyList();
++        }
++
++        return Collections.singletonList(Cookie.parse(url, cookie));
++    }
++}
 diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
-index 2214f04..a0d7b1b 100644
+index 2214f04..c504bcd 100644
 --- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
 +++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
 @@ -31,6 +31,17 @@ import okio.ForwardingSource;
@@ -20,8 +64,11 @@ index 2214f04..a0d7b1b 100644
  @GlideModule
  public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
  
-@@ -47,21 +58,47 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+@@ -45,23 +56,51 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+         OkHttpClient client = OkHttpClientProvider
+                 .getOkHttpClient()
                  .newBuilder()
++                .cookieJar(new FastImageCookieJar())
                  .addInterceptor(createInterceptor(progressListener))
                  .build();
 +
@@ -58,6 +105,7 @@ index 2214f04..a0d7b1b 100644
 +                        return execute(chain, request);
 +                    } catch(javax.net.ssl.SSLHandshakeException ce) {
 +                        OkHttpClient client = getUnsafeOkHttpClientBuilder()
++                            .cookieJar(new FastImageCookieJar())
 +                            .addInterceptor(createInterceptor(listener))
 +                            .build();
 +
@@ -73,7 +121,7 @@ index 2214f04..a0d7b1b 100644
              }
          };
      }
-@@ -76,11 +113,13 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+@@ -76,11 +115,13 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
  
      private interface ResponseProgressListener {
          void update(String key, long bytesRead, long contentLength);
@@ -87,7 +135,7 @@ index 2214f04..a0d7b1b 100644
  
          private final Handler handler;
  
-@@ -91,10 +130,21 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+@@ -91,10 +132,21 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
          void forget(String key) {
              LISTENERS.remove(key);
              PROGRESSES.remove(key);
@@ -109,7 +157,7 @@ index 2214f04..a0d7b1b 100644
          }
  
          @Override
-@@ -186,4 +236,49 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+@@ -186,4 +238,49 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
              };
          }
      }
