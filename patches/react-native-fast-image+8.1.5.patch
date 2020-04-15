@@ -1,0 +1,203 @@
+diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
+index 2214f04..a0d7b1b 100644
+--- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
++++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageOkHttpProgressGlideModule.java
+@@ -31,6 +31,17 @@ import okio.ForwardingSource;
+ import okio.Okio;
+ import okio.Source;
+ 
++import java.security.cert.CertificateException;
++import java.security.cert.X509Certificate;
++
++import javax.net.ssl.HostnameVerifier;
++import javax.net.ssl.SSLContext;
++import javax.net.ssl.SSLSession;
++import javax.net.ssl.SSLSocketFactory;
++import javax.net.ssl.TrustManager;
++import javax.net.ssl.X509TrustManager;
++
++
+ @GlideModule
+ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+ 
+@@ -47,21 +58,47 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+                 .newBuilder()
+                 .addInterceptor(createInterceptor(progressListener))
+                 .build();
++
+         OkHttpUrlLoader.Factory factory = new OkHttpUrlLoader.Factory(client);
+         registry.replace(GlideUrl.class, InputStream.class, factory);
+     }
+ 
+     private static Interceptor createInterceptor(final ResponseProgressListener listener) {
+         return new Interceptor() {
++
++            private Response execute(Chain chain, Request request) throws IOException {
++                Response response = chain.proceed(request);
++                final String key = request.url().toString();
++                return response
++                    .newBuilder()
++                    .body(new OkHttpProgressResponseBody(key, response.body(), listener))
++                    .build();
++            }
++
+             @Override
+             public Response intercept(Chain chain) throws IOException {
+                 Request request = chain.request();
+-                Response response = chain.proceed(request);
++
+                 final String key = request.url().toString();
+-                return response
+-                        .newBuilder()
+-                        .body(new OkHttpProgressResponseBody(key, response.body(), listener))
+-                        .build();
++                final Boolean trustSsl = listener.isTrustSslEnabled(key);
++
++                if (trustSsl) {
++                    try {
++                        return execute(chain, request);
++                    } catch(javax.net.ssl.SSLHandshakeException ce) {
++                        OkHttpClient client = getUnsafeOkHttpClientBuilder()
++                            .addInterceptor(createInterceptor(listener))
++                            .build();
++
++                        Response response = client.newCall(request).execute();
++                        return response
++                                .newBuilder()
++                                .body(new OkHttpProgressResponseBody(key, response.body(), listener))
++                                .build();
++                    }
++                } else {
++                    return execute(chain, request);
++                }
+             }
+         };
+     }
+@@ -76,11 +113,13 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+ 
+     private interface ResponseProgressListener {
+         void update(String key, long bytesRead, long contentLength);
++        Boolean isTrustSslEnabled(String key);
+     }
+ 
+     private static class DispatchingProgressListener implements ResponseProgressListener {
+         private final Map<String, FastImageProgressListener> LISTENERS = new WeakHashMap<>();
+         private final Map<String, Long> PROGRESSES = new HashMap<>();
++        private final Map<String, Boolean> TRUST_SSL = new HashMap<>();
+ 
+         private final Handler handler;
+ 
+@@ -91,10 +130,21 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+         void forget(String key) {
+             LISTENERS.remove(key);
+             PROGRESSES.remove(key);
++            TRUST_SSL.remove(key);
+         }
+ 
+         void expect(String key, FastImageProgressListener listener) {
+             LISTENERS.put(key, listener);
++            TRUST_SSL.put(key, listener.getTrustSsl());
++        }
++
++        @Override
++        public Boolean isTrustSslEnabled(String key) {
++            Boolean trustSsl = TRUST_SSL.get(key);
++            if (trustSsl == null) {
++                trustSsl = false;
++            }
++            return trustSsl;
+         }
+ 
+         @Override
+@@ -186,4 +236,49 @@ public class FastImageOkHttpProgressGlideModule extends LibraryGlideModule {
+             };
+         }
+     }
++
++    private static OkHttpClient.Builder getUnsafeOkHttpClientBuilder() {
++        try {
++            // Create a trust manager that does not validate certificate chains
++            final X509TrustManager x509TrustManager = getUnsafeTrustManager();
++
++            final TrustManager[] trustAllCerts = new TrustManager[]{ x509TrustManager };
++
++            // Install the all-trusting trust manager
++            final SSLContext sslContext = SSLContext.getInstance("SSL");
++            sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
++            // Create an ssl socket factory with our all-trusting manager
++            final SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
++
++            OkHttpClient.Builder builder = new OkHttpClient.Builder();
++            builder.sslSocketFactory(sslSocketFactory, x509TrustManager);
++            builder.hostnameVerifier(new HostnameVerifier() {
++                @Override
++                public boolean verify(String hostname, SSLSession session) {
++                    return true;
++                }
++            });
++
++            return builder;
++        } catch (Exception e) {
++            throw new RuntimeException(e);
++        }
++    }
++
++    private static X509TrustManager getUnsafeTrustManager() {
++        return new X509TrustManager() {
++            @Override
++            public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
++            }
++
++            @Override
++            public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
++            }
++
++            @Override
++            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
++                return new java.security.cert.X509Certificate[]{};
++            }
++        };
++    }
+ }
+diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java
+index 6cd5eb2..464e57c 100644
+--- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java
++++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageProgressListener.java
+@@ -11,4 +11,5 @@ public interface FastImageProgressListener {
+      */
+     float getGranularityPercentage();
+ 
++    Boolean getTrustSsl();
+ }
+diff --git a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java
+index f97ec71..cb5ace1 100644
+--- a/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java
++++ b/node_modules/react-native-fast-image/android/src/main/java/com/dylanvann/fastimage/FastImageViewManager.java
+@@ -26,6 +26,7 @@ import java.util.WeakHashMap;
+ 
+ import javax.annotation.Nullable;
+ 
++
+ import static com.dylanvann.fastimage.FastImageRequestListener.REACT_ON_ERROR_EVENT;
+ import static com.dylanvann.fastimage.FastImageRequestListener.REACT_ON_LOAD_END_EVENT;
+ import static com.dylanvann.fastimage.FastImageRequestListener.REACT_ON_LOAD_EVENT;
+@@ -36,6 +37,7 @@ class FastImageViewManager extends SimpleViewManager<FastImageViewWithUrl> imple
+     private static final String REACT_ON_LOAD_START_EVENT = "onFastImageLoadStart";
+     private static final String REACT_ON_PROGRESS_EVENT = "onFastImageProgress";
+     private static final Map<String, List<FastImageViewWithUrl>> VIEWS_FOR_URLS = new WeakHashMap<>();
++    private static Boolean trustSsl = true;
+ 
+     @Nullable
+     private RequestManager requestManager = null;
+@@ -125,6 +127,11 @@ class FastImageViewManager extends SimpleViewManager<FastImageViewWithUrl> imple
+         view.setScaleType(scaleType);
+     }
+ 
++    @Override
++    public Boolean getTrustSsl() {
++        return this.trustSsl;
++    }
++
+     @Override
+     public void onDropViewInstance(FastImageViewWithUrl view) {
+         // This will cancel existing requests.
