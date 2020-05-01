@@ -1,6 +1,8 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import Rego from '@open-policy-agent/opa-wasm';
+
 import {batchActions} from 'redux-batched-actions';
 
 import {ChannelTypes, GeneralTypes, TeamTypes} from '@mm-redux/action_types';
@@ -19,6 +21,7 @@ import {getStateForReset} from '@store/utils';
 import {recordTime} from '@utils/segment';
 
 import {markChannelViewedAndRead} from './channel';
+import {Alert} from 'react-native';
 
 export function startDataCleanup() {
     return async (dispatch, getState) => {
@@ -31,6 +34,30 @@ export function startDataCleanup() {
 
 export function loadConfigAndLicense() {
     return async (dispatch, getState) => {
+
+        const oReq = new XMLHttpRequest();
+        oReq.open('GET', 'http://192.168.2.11:8065/static/files/wasm/policy.wasm', true);
+        oReq.responseType = 'arraybuffer';
+        oReq.onload = () => {
+            const arrayBuffer = oReq.response;
+            if (arrayBuffer) {
+                const rego = new Rego();
+                rego.load_policy(arrayBuffer).then((policies) => {
+                    // window.Mattermost = {Authz: policies};
+                    const data = {post_restricted_channels: {user: ['c3r1pae4hjrepx6qfghatmeekc'], guest: [], admin: []}};
+                    const input = {
+                        subject: {type: 'person', attributes: {channel_role: 'user'}},
+                        operation: 'write',
+                        resource: {type: 'post', attributes: {channel_id: 'c3r1pae4hjrepx6qfghatmeekc'}}
+                    };
+                    policies.set_data(data);
+                    const result = policies.evaluate(input);
+                    Alert.alert('Alert Title', `result: ${result[0].x}`);
+                });
+            }
+        };
+        oReq.send(null);
+
         const {currentUserId} = getState().entities.users;
 
         try {

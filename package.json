@@ -8,6 +8,7 @@
   "private": true,
   "dependencies": {
     "@babel/runtime": "7.9.2",
+    "@open-policy-agent/opa-wasm": "github:mkraft/npm-opa-wasm#builtin-count2",
     "@react-native-community/async-storage": "1.8.1",
     "@react-native-community/cameraroll": "1.5.2",
     "@react-native-community/netinfo": "4.4.0",
